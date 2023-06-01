@@ -380,11 +380,14 @@ class SaicApi:
         vehicle_control_cmd_rsp_msg = self.send_vehicle_control_command(vin_info, rvc_req_type, rvc_params)
 
         if has_app_data:
+            # FIXME: This is a potentially infinite busy loop, it would be best to insert some kind of max retry count
             while vehicle_control_cmd_rsp_msg.application_data is None:
                 if vehicle_control_cmd_rsp_msg.body.error_message is not None:
                     self.handle_error(vehicle_control_cmd_rsp_msg.body)
                 else:
                     logging.debug('API request returned no application data and no error message.')
+
+                    # TODO: Check how to migrate this to asyncio as it would free time for other co-routines to run
                     time.sleep(float(AVG_SMS_DELIVERY_TIME))
 
                 event_id = vehicle_control_cmd_rsp_msg.body.event_id
@@ -416,23 +419,34 @@ class SaicApi:
                 result.append(convert(message))
         return result
 
-    def handle_retry(self, func, vin_info: VinInfo = None):
+    def handle_retry(self, func, vin_info: VinInfo = None, max_retries: int = 5):
         if vin_info:
             rsp = func(vin_info)
         else:
             rsp = func()
         rsp_msg = cast(AbstractMessage, rsp)
-        while rsp_msg.application_data is None:
+
+        retry_count = 0
+        while(
+            rsp_msg.application_data is None
+            and retry_count < max_retries
+        ):
+            retry_count += 1
             if rsp_msg.body.error_message is not None:
                 self.handle_error(rsp_msg.body)
             else:
                 logging.debug('API request returned no application data and no error message.')
+                # TODO: Check how to migrate this to asyncio as it would free time for other co-routines to run
                 time.sleep(float(AVG_SMS_DELIVERY_TIME))
 
             if vin_info:
                 rsp_msg = func(vin_info, rsp_msg.body.event_id)
             else:
                 rsp_msg = func(rsp_msg.body.event_id)
+
+        if retry_count >= max_retries:
+            raise SaicApiException(f"Could not execute {func} after {max_retries} retries.")
+
         return rsp_msg
 
     def send_vehicle_control_command(self, vin_info: VinInfo, rvc_req_type: bytes, rvc_params: list,
@@ -601,28 +615,37 @@ class SaicApi:
         return self.token
 
     def handle_error(self, message_body: AbstractMessageBody):
+        result_code = message_body.result
         message = f'application ID: {message_body.application_id},'\
               + f' protocol version: {message_body.application_data_protocol_version},'\
               + f' message: {message_body.error_message.decode()}'\
-              + f' result code: {message_body.result}'
+              + f' result code: {result_code}'
 
-        if message_body.result == 2:
+        # Looks like the only recovery we have from a status_code 6 is a logout, wait and then login.
+        # This seems to happen if we hit the API too much. Maybe it's a sort of rate-limit?
+        if result_code == 2 or result_code == 6:
             # re-login
             logging.debug(message)
             if self.relogin_delay > 0:
                 logging.warning(f'The SAIC user has been logged out. '
                                 + f'Waiting {self.relogin_delay} seconds before attempting another login')
+
+                # TODO: Check how to migrate this to asyncio as it would free time for other co-routines to run
                 time.sleep(float(self.relogin_delay))
             self.login()
-        elif message_body.result == 4:
-            # please try again later
-            logging.debug(message)
-            time.sleep(float(AVG_SMS_DELIVERY_TIME))
-        elif message_body.result == -1:
-            logging.warning(message)
         else:
-            logging.error(message)
+            if result_code == 4:
+                # please try again later
+                logging.debug(message)
+            elif result_code == -1:
+                logging.warning(message)
+            else:
+                logging.error(message)
 
+            # handle_error runs the risk of creating a busy_loop.
+            # Usually retrying a failed operation too fast is not advisable.
+            # TODO: Check how to migrate this to asyncio as it would free time for other co-routines to run
+            time.sleep(float(AVG_SMS_DELIVERY_TIME))
 
 def hash_md5(password: str) -> str:
     return hashlib.md5(password.encode('utf-8')).hexdigest()
