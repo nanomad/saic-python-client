@@ -1,7 +1,8 @@
 import json
 import time
+import aiohttp
 
-import requests
+from aiohttp import ClientSession
 from saic_ismart_client.ota_v2_1.data_model import OtaRvmVehicleStatusResp25857, RvsPosition, RvsBasicStatus25857
 from saic_ismart_client.ota_v3_0.data_model import OtaChrgMangDataResp
 
@@ -15,11 +16,12 @@ class AbrpApiException(Exception):
 
 
 class AbrpApi:
-    def __init__(self, abrp_api_key: str, abrp_user_token: str) -> None:
+    def __init__(self, abrp_api_key: str, abrp_user_token: str, http_client: ClientSession) -> None:
         self.abrp_api_key = abrp_api_key
         self.abrp_user_token = abrp_user_token
+        self.http_client = http_client
 
-    def update_abrp(self, vehicle_status: OtaRvmVehicleStatusResp25857, charge_status: OtaChrgMangDataResp) -> None:
+    async def update_abrp(self, vehicle_status: OtaRvmVehicleStatusResp25857, charge_status: OtaChrgMangDataResp) -> None:
         if (
                 self.abrp_api_key is not None
                 and self.abrp_user_token is not None
@@ -51,18 +53,19 @@ class AbrpApi:
             }
 
             try:
-                response = requests.post(url=tlm_send_url, headers=headers, params={
+                async with self.http_client.post(url=tlm_send_url, headers=headers, params={
                     'token': self.abrp_user_token,
                     'tlm': json.dumps(data)
-                })
-                print(f'ABRP: {response.content}')
-            except requests.exceptions.ConnectionError as ece:
+                }) as response:
+                    response_text = await response.text()
+                    print(f'ABRP: {response_text}')
+            except aiohttp.ClientConnectionError as ece:
                 raise AbrpApiException(f'Connection error: {ece}')
-            except requests.exceptions.Timeout as et:
+            except aiohttp.ServerTimeoutError as et:
                 raise AbrpApiException(f'Timeout error {et}')
-            except requests.exceptions.HTTPError as ehttp:
+            except aiohttp.ClientResponseError as ehttp:
                 raise AbrpApiException(f'HTTP error {ehttp}')
-            except requests.exceptions.RequestException as e:
+            except aiohttp.ClientError as e:
                 raise AbrpApiException(f'{e}')
 
     @staticmethod

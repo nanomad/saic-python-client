@@ -10,8 +10,8 @@ authors = [
 ]
 dependencies = [
     "asn1tools >= 0.165.0",
-    "requests >= 2.28.2",
     "urllib3 >= 1.26.14",
+    "aiohttp >= 3.8.4"
 ]
 description = "SAIC client library (MG iSMART)"
 readme = "README.md"
