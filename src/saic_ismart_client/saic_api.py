@@ -391,7 +391,7 @@ class SaicApi:
                 else:
                     logging.debug('API request returned no application data and no error message.')
 
-                    time.sleep(float(AVG_SMS_DELIVERY_TIME))
+                    await asyncio.sleep(float(AVG_SMS_DELIVERY_TIME))
 
                 event_id = vehicle_control_cmd_rsp_msg.body.event_id
                 vehicle_control_cmd_rsp_msg = self.send_vehicle_control_command(vin_info, rvc_req_type, rvc_params,
@@ -616,10 +616,15 @@ class SaicApi:
             raise SaicApiException(f'{e}')
 
     async def get_token(self) -> str:
+        # Handle the first login scenario
+        if self.token is None:
+            await self.login()
+
         if self.token_expiration is not None:
             token_expiration = cast(Timestamp, self.token_expiration)
             if token_expiration.get_timestamp() < datetime.datetime.now():
                 await self.login()
+
         return self.token
 
     async def handle_error(self, message_body: AbstractMessageBody):
@@ -637,8 +642,8 @@ class SaicApi:
             if self.relogin_delay > 0:
                 logging.warning(f'The SAIC user has been logged out. '
                                 + f'Waiting {self.relogin_delay} seconds before attempting another login')
-
-                await asyncio.sleep(float(self.relogin_delay))
+                # FIXME: Right now we block the entire python runtime for the relogin_delay.
+                time.sleep(float(self.relogin_delay))
             await self.login()
         else:
             if result_code == 4:
