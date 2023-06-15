@@ -4,7 +4,7 @@ import hashlib
 import logging
 import time
 import urllib.parse
-from typing import cast
+from typing import cast, Callable, Awaitable, Union
 
 import aiohttp
 from aiohttp import ClientSession
@@ -88,8 +88,8 @@ class SaicApi:
         self.uid = ''
         self.token = ''
         self.token_expiration = None
-        self.on_publish_raw_value = None
-        self.on_publish_json_value = None
+        self.on_publish_raw_value: Union[Callable[[str, str], Awaitable[None]], None] = None
+        self.on_publish_json_value: Union[Callable[[str, dict], Awaitable[None]], None] = None
         self.http_client = http_client
 
     async def login(self) -> MessageV11:
@@ -423,11 +423,15 @@ class SaicApi:
                 result.append(convert(message))
         return result
 
-    async def handle_retry(self, func, vin_info: VinInfo = None, max_retries: int = 5):
+    VinCallable = Callable[[VinInfo], Awaitable[AbstractMessage]]
+    VoidCallable = Callable[[], Awaitable[AbstractMessage]]
+    HandleRetryType = Union[VinCallable, VoidCallable]
+
+    async def handle_retry(self, func: HandleRetryType, vin_info: VinInfo = None, max_retries: int = 5):
         if vin_info:
-            rsp = func(vin_info)
+            rsp = await func(vin_info)
         else:
-            rsp = func()
+            rsp = await func()
         rsp_msg = cast(AbstractMessage, rsp)
 
         retry_count = 0

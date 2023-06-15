@@ -1,8 +1,8 @@
 import json
-from unittest import TestCase
-from unittest.mock import patch, PropertyMock
+from unittest import IsolatedAsyncioTestCase
 
-import requests
+from aiohttp import ClientSession
+from mock.mock import AsyncMock, patch
 from saic_ismart_client.abrp_api import AbrpApi
 from saic_ismart_client.ota_v2_1.data_model import OtaRvmVehicleStatusResp25857, RvsPosition, RvsWayPoint, \
     RvsWgs84Point, Timestamp4Short, RvsBasicStatus25857
@@ -47,27 +47,24 @@ def get_mocked_charge_status() -> OtaChrgMangDataResp:
 
 
 def mock_post(mocked_post):
-    def res():
-        r = requests.Response()
-        r.status_code = 200
-        return r
-
-    mocked_post.return_value = res()
-    type(mocked_post.return_value).content = PropertyMock(return_value=json.dumps({'status': 'ok'}).encode())
+    mocked_post.return_value.__aenter__.return_value.status = 200
+    mocked_post.return_value.__aenter__.return_value.json = AsyncMock(return_value={'status': 'ok'})
 
 
-class TestAbrpApi(TestCase):
-    def setUp(self) -> None:
-        self.abrp_api = AbrpApi(ABRP_API_KEY, ABRP_USER_TOKEN)
+class TestAbrpApi(IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        async with ClientSession() as client_session:
+            self.abrp_api = AbrpApi(ABRP_API_KEY, ABRP_USER_TOKEN, client_session)
 
-    @patch.object(requests, 'post')
-    def test_update_abrp(self, mocked_post):
+    @patch.object(ClientSession, 'post')
+    async def test_update_abrp(self, mocked_post):
         vehicle_status = get_mocked_vehicle_status()
         charge_status = get_mocked_charge_status()
 
         mock_post(mocked_post)
 
-        self.abrp_api.update_abrp(vehicle_status, charge_status)
+        await self.abrp_api.update_abrp(vehicle_status, charge_status)
+
         self.assertEqual(TLM_URL, mocked_post.call_args.kwargs['url'])
         header_dict = mocked_post.call_args.kwargs['headers']
         self.check_dict_value(header_dict, 'Authorization', f'APIKEY {ABRP_API_KEY}')

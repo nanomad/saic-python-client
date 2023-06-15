@@ -57,7 +57,7 @@ class AbrpApi:
                     'token': self.abrp_user_token,
                     'tlm': json.dumps(data)
                 }) as response:
-                    response_text = await response.text()
+                    response_text = await response.json()
                     print(f'ABRP: {response_text}')
             except aiohttp.ClientConnectionError as ece:
                 raise AbrpApiException(f'Connection error: {ece}')

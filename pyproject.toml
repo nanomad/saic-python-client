@@ -25,3 +25,13 @@ classifiers = [
 [project.urls]
 "Homepage" = "https://github.com/SAIC-iSmart-API/saic-python-client"
 "Bug Tracker" = "https://github.com/SAIC-iSmart-API/saic-python-client/issues"
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "./src"
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest >= 7.3.0",
+]
