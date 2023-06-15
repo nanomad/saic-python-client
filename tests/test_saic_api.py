@@ -1,9 +1,11 @@
+import asyncio
 from typing import cast
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, mock
 
+import pytest
 import saic_ismart_client.saic_api
 from aiohttp import ClientSession
-from mock.mock import AsyncMock, patch
+from mock.mock import AsyncMock, patch, Mock
 from saic_ismart_client.common_model import Header, MessageV2, MessageBodyV2
 from saic_ismart_client.ota_v1_1.Message import MessageCoderV11
 from saic_ismart_client.ota_v1_1.data_model import MessageV11, MpUserLoggingInRsp, MessageBodyV11, VinInfo, \
@@ -146,6 +148,34 @@ def mock_vehicle_status_response(message_v2_1_coder: MessageCoderV21, uid: str, 
     return message_v2_1_coder.encode_request(message)
 
 
+def mock_vehicle_status_no_response(message_v2_1_coder: MessageCoderV21, uid: str, token: str,
+                                    vin_info: VinInfo) -> str:
+    message = MessageV2(MessageBodyV2(), None)
+    message_v2_1_coder.initialize_message(
+        uid,
+        token,
+        vin_info.vin,
+        "511",
+        25857,
+        1,
+        message)
+    return message_v2_1_coder.encode_request(message)
+
+
+def mock_message_list_no_response(message_v1_1_coder: MessageCoderV11, uid: str, token: str) -> str:
+    header = Header()
+    header.protocol_version = 17
+    message = MessageV11(header, MessageBodyV11(), None)
+    message_v1_1_coder.initialize_message(
+        uid,
+        token,
+        '531',
+        513,
+        1,
+        message)
+    return message_v1_1_coder.encode_request(message)
+
+
 def mock_chrg_mgmt_data_rsp(message_v3_0_coder: MessageCoderV30, uid: str, token: str, vin_info: VinInfo) -> str:
     chrg_mgmt_data_rsp = OtaChrgMangDataResp()
     chrg_mgmt_data_rsp.bmsAdpPubChrgSttnDspCmd = 0
@@ -248,7 +278,7 @@ def mock_start_ac_rsp_msg(message_coder_v2_1: MessageCoderV21, uid: str, token: 
     return message_coder_v2_1.encode_request(start_ac_rsp_msg)
 
 
-def mock_response(mocked_post, hex_value: str):
+def mock_response(mocked_post: Mock, hex_value: str):
     mocked_post.return_value.__aenter__.return_value.status = 200
     mocked_post.return_value.__aenter__.return_value.text = AsyncMock(return_value=hex_value)
 
@@ -309,3 +339,26 @@ class TestSaicApi(IsolatedAsyncioTestCase):
         app_data = cast(OtaRvcStatus25857, start_ac_rsp_msg.application_data)
         self.assertEqual(app_data.rvcReqType, b'\x06')
         self.assertEqual(start_ac_rsp_msg.body.ack_required, False)
+
+    @patch.object(ClientSession, 'post')
+    @patch.object(asyncio, 'sleep', new_callable=AsyncMock)
+    async def test_get_vehicle_status_on_error(self, _mocked_sleep, mocked_post):
+        vin_info = create_vin_info(VIN)
+        mock_response(mocked_post, mock_vehicle_status_no_response(self.message_coder_v2_1, UID, TOKEN, vin_info))
+
+        with pytest.raises(SaicApiException):
+            await self.saic_api.get_vehicle_status_with_retry(vin_info)
+
+        # Assert that SAIC API was called 5 times
+        self.assertEqual(6, mocked_post.call_count)
+
+    @patch.object(ClientSession, 'post')
+    @patch.object(asyncio, 'sleep', new_callable=AsyncMock)
+    async def test_get_message_list_on_error(self, _mocked_sleep, mocked_post):
+        mock_response(mocked_post, mock_message_list_no_response(self.message_coder_v1_1, UID, TOKEN))
+
+        with pytest.raises(SaicApiException):
+            await self.saic_api.get_message_list_with_retry()
+
+        # Assert that SAIC API was called 5 times
+        self.assertEqual(6, mocked_post.call_count)

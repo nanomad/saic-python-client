@@ -4,7 +4,7 @@ import hashlib
 import logging
 import time
 import urllib.parse
-from typing import cast, Callable, Awaitable, Union
+from typing import cast, Callable, Awaitable, Union, Optional
 
 import aiohttp
 from aiohttp import ClientSession
@@ -391,7 +391,6 @@ class SaicApi:
                 else:
                     logging.debug('API request returned no application data and no error message.')
 
-                    # TODO: Check how to migrate this to asyncio as it would free time for other co-routines to run
                     time.sleep(float(AVG_SMS_DELIVERY_TIME))
 
                 event_id = vehicle_control_cmd_rsp_msg.body.event_id
@@ -423,15 +422,16 @@ class SaicApi:
                 result.append(convert(message))
         return result
 
-    VinCallable = Callable[[VinInfo], Awaitable[AbstractMessage]]
-    VoidCallable = Callable[[], Awaitable[AbstractMessage]]
+    VinCallable = Callable[[VinInfo, Optional[str]], Awaitable[AbstractMessage]]
+    VoidCallable = Callable[[Optional[str]], Awaitable[AbstractMessage]]
     HandleRetryType = Union[VinCallable, VoidCallable]
 
     async def handle_retry(self, func: HandleRetryType, vin_info: VinInfo = None, max_retries: int = 5):
         if vin_info:
-            rsp = await func(vin_info)
+            rsp = await func(vin_info, None)
         else:
-            rsp = await func()
+            rsp = await func(None)
+
         rsp_msg = cast(AbstractMessage, rsp)
 
         retry_count = 0
@@ -444,13 +444,12 @@ class SaicApi:
                 await self.handle_error(rsp_msg.body)
             else:
                 logging.debug('API request returned no application data and no error message.')
-                # TODO: Check how to migrate this to asyncio as it would free time for other co-routines to run
                 await asyncio.sleep(float(AVG_SMS_DELIVERY_TIME))
 
             if vin_info:
-                rsp_msg = func(vin_info, rsp_msg.body.event_id)
+                rsp_msg = await func(vin_info, rsp_msg.body.event_id)
             else:
-                rsp_msg = func(rsp_msg.body.event_id)
+                rsp_msg = await func(rsp_msg.body.event_id)
 
         if retry_count >= max_retries:
             raise SaicApiException(f"Could not execute {func} after {max_retries} retries.")
@@ -639,7 +638,6 @@ class SaicApi:
                 logging.warning(f'The SAIC user has been logged out. '
                                 + f'Waiting {self.relogin_delay} seconds before attempting another login')
 
-                # TODO: Check how to migrate this to asyncio as it would free time for other co-routines to run
                 await asyncio.sleep(float(self.relogin_delay))
             await self.login()
         else:
@@ -653,7 +651,6 @@ class SaicApi:
 
             # handle_error runs the risk of creating a busy_loop.
             # Usually retrying a failed operation too fast is not advisable.
-            # TODO: Check how to migrate this to asyncio as it would free time for other co-routines to run
             await asyncio.sleep(float(AVG_SMS_DELIVERY_TIME))
 
 
